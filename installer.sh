@@ -22,7 +22,6 @@ Description=Exim Exporter for Prometheus
 After=network.target
 
 [Service]
-User=nobody
 WorkingDirectory=$EXPORTER_DIR
 ExecStart=/usr/bin/python3 $EXPORTER_DIR/exim_exporter.py
 Restart=always
