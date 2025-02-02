@@ -64,7 +64,7 @@ queue_time_all = Gauge('exim_queue_time_all_messages', 'Time spent on the queue 
 queue_time_remote = Gauge('exim_queue_time_remote_messages', 'Time spent on the queue for messages with at least one remote delivery', ['time_range'])
 
 # Relayed messages
-relayed_messages = Gauge('exim_relayed_messages', 'Relayed messages', ['from', 'to'])
+relayed_messages = Gauge('exim_relayed_messages', 'Relayed messages', ['from_host', 'from_mail', 'to_host', 'to_mail'])
 
 # Top 50 mail rejection reasons by message count
 rejection_reasons = Counter('exim_rejection_reasons', 'Mail rejection reasons by message count', ['reason'])
@@ -115,6 +115,7 @@ def get_email_counts():
             parts = line.split()
             if len(parts) > 0 and '@' in parts[-1]:
                 email = parts[-1]
+                email.replace('<', '').replace('>', '')
                 email_counts[email] = email_counts.get(email, 0) + 1
         return email_counts
     except Exception as e:
@@ -138,190 +139,197 @@ def update_queue_metrics():
 
 
 def parse_exim_stats(html_content):
-    soup = BeautifulSoup(html_content, 'html.parser')
-    
-    # Parse Grand Total Summary
-    grand_total_table = soup.find('a', {'name': 'Grandtotal'}).find_next('table')
-    rows = grand_total_table.find_all('tr')
-    
-    for row in rows:
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            if cols[0].text.strip() == 'Received':
-                messages_received.set(int(cols[2].text.strip()))
-                volume_received.set(convert_to_bytes(cols[1].text.strip()))
-            elif cols[0].text.strip() == 'Delivered':
-                messages_delivered.set(int(cols[2].text.strip()))
-                volume_delivered.set(convert_to_bytes(cols[1].text.strip()))
-            elif cols[0].text.strip() == 'Rejects':
-                messages_rejected.set(int(cols[2].text.strip()))
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Parse Grand Total Summary
+        grand_total_table = soup.find('a', {'name': 'Grandtotal'}).find_next('table')
+        rows = grand_total_table.find_all('tr')
+        
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                if cols[0].text.strip() == 'Received':
+                    messages_received.set(int(cols[2].text.strip()))
+                    volume_received.set(convert_to_bytes(cols[1].text.strip()))
+                elif cols[0].text.strip() == 'Delivered':
+                    messages_delivered.set(int(cols[2].text.strip()))
+                    volume_delivered.set(convert_to_bytes(cols[1].text.strip()))
+                elif cols[0].text.strip() == 'Rejects':
+                    messages_rejected.set(int(cols[2].text.strip()))
 
-    # Parse Deliveries by Transport
-    transport_table = soup.find('a', {'name': 'Transport'}).find_next('table')
-    rows = transport_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            transport = cols[0].text.strip()
-            transport_volume.labels(transport).set(convert_to_bytes(cols[1].text.strip()))
-            transport_messages.labels(transport).set(int(cols[2].text.strip()))
+        # Parse Deliveries by Transport
+        transport_table = soup.find('a', {'name': 'Transport'}).find_next('table')
+        rows = transport_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                transport = cols[0].text.strip()
+                transport_volume.labels(transport).set(convert_to_bytes(cols[1].text.strip()))
+                transport_messages.labels(transport).set(int(cols[2].text.strip()))
 
-    # Parse Messages received per hour
-    messages_received_table = soup.find('a', {'name': 'Messages received'}).find_next('table')
-    rows = messages_received_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            hour = cols[0].text.strip()
-            messages_received_per_hour.labels(hour).set(int(cols[1].text.strip()))
+        # Parse Messages received per hour
+        messages_received_table = soup.find('a', {'name': 'Messages received'}).find_next('table')
+        rows = messages_received_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                hour = cols[0].text.strip()
+                messages_received_per_hour.labels(hour).set(int(cols[1].text.strip()))
 
-    # Parse Deliveries per hour
-    deliveries_table = soup.find('a', {'name': 'Deliveries'}).find_next('table')
-    rows = deliveries_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            hour = cols[0].text.strip()
-            deliveries_per_hour.labels(hour).set(int(cols[1].text.strip()))
+        # Parse Deliveries per hour
+        deliveries_table = soup.find('a', {'name': 'Deliveries'}).find_next('table')
+        rows = deliveries_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                hour = cols[0].text.strip()
+                deliveries_per_hour.labels(hour).set(int(cols[1].text.strip()))
 
-    # Parse Time spent on the queue: all messages
-    queue_time_all_table = soup.find('a', {'name': 'Time spent on the queue all messages'}).find_next('table')
-    rows = queue_time_all_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            time_range = cols[0].text.strip()
-            messages = int(cols[1].text.strip())
-            queue_time_all.labels(time_range).set(messages)
+        # Parse Time spent on the queue: all messages
+        queue_time_all_table = soup.find('a', {'name': 'Time spent on the queue all messages'}).find_next('table')
+        rows = queue_time_all_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                time_range = cols[0].text.strip()
+                messages = int(cols[1].text.strip())
+                queue_time_all.labels(time_range).set(messages)
 
-    # Parse Time spent on the queue: messages with at least one remote delivery
-    queue_time_remote_table = soup.find('a', {'name': 'Time spent on the queue messages with at least one remote delivery'}).find_next('table')
-    rows = queue_time_remote_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            time_range = cols[0].text.strip()
-            messages = int(cols[1].text.strip())
-            queue_time_remote.labels(time_range).set(messages)
+        # Parse Time spent on the queue: messages with at least one remote delivery
+        queue_time_remote_table = soup.find('a', {'name': 'Time spent on the queue messages with at least one remote delivery'}).find_next('table')
+        rows = queue_time_remote_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                time_range = cols[0].text.strip()
+                messages = int(cols[1].text.strip())
+                queue_time_remote.labels(time_range).set(messages)
 
-    # Parse Relayed messages
-    relayed_messages_table = soup.find('a', {'name': 'Relayed messages'}).find_next('table')
-    rows = relayed_messages_table.find_all('tr')
-    
-    # Reset the relayed_messages metric before updating it
-    relayed_messages.clear()
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            from_host = cols[1].text.strip()
-            to_host = cols[2].text.strip()
-            relayed_messages.labels(from_host, to_host).set(int(cols[0].text.strip()))
+        # Parse Relayed messages
+        relayed_messages_table = soup.find('a', {'name': 'Relayed messages'}).find_next('table')
+        rows = relayed_messages_table.find_all('tr')
+        
+        # Reset the relayed_messages metric before updating it
+        relayed_messages.clear()
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                _from = cols[1].text.strip()
+                _to = cols[2].text.strip()
+                from_host = _from.split(' ')[0]
+                to_host = _to.split(' ')[0]
+                from_email = _from.split(' ')[1]
+                to_email = _to.split(' ')[1]
+                relayed_messages.labels(from_host, from_email, to_host, to_email).set(int(cols[0].text.strip()))
 
-    # Parse Top 50 mail rejection reasons by message count
-    rejection_reasons_table = soup.find('a', {'name': 'Mail rejection reason count'}).find_next('table')
-    rows = rejection_reasons_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            reason = cols[1].text.strip()
-            rejection_reasons.labels(reason).inc(int(cols[0].text.strip()))
+        # Parse Top 50 mail rejection reasons by message count
+        rejection_reasons_table = soup.find('a', {'name': 'Mail rejection reason count'}).find_next('table')
+        rows = rejection_reasons_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                reason = cols[1].text.strip()
+                rejection_reasons.labels(reason).inc(int(cols[0].text.strip()))
 
-    # Parse Top 50 sending hosts by message count
-    sending_hosts_message_count_table = soup.find('a', {'name': 'Sending host count'}).find_next('table')
-    rows = sending_hosts_message_count_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            host = cols[3].text.strip()
-            sending_hosts_message_count.labels(host).set(int(cols[0].text.strip()))
+        # Parse Top 50 sending hosts by message count
+        sending_hosts_message_count_table = soup.find('a', {'name': 'Sending host count'}).find_next('table')
+        rows = sending_hosts_message_count_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                host = cols[3].text.strip()
+                sending_hosts_message_count.labels(host).set(int(cols[0].text.strip()))
 
-    # Parse Top 50 sending hosts by volume
-    sending_hosts_volume_table = soup.find('a', {'name': 'Sending host volume'}).find_next('table')
-    rows = sending_hosts_volume_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            host = cols[3].text.strip()
-            sending_hosts_volume.labels(host).set(convert_to_bytes(cols[1].text.strip()))
+        # Parse Top 50 sending hosts by volume
+        sending_hosts_volume_table = soup.find('a', {'name': 'Sending host volume'}).find_next('table')
+        rows = sending_hosts_volume_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                host = cols[3].text.strip()
+                sending_hosts_volume.labels(host).set(convert_to_bytes(cols[1].text.strip()))
 
-    # Parse Top 50 local senders by message count
-    local_senders_message_count_table = soup.find('a', {'name': 'Local sender count'}).find_next('table')
-    rows = local_senders_message_count_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            sender = cols[3].text.strip()
-            local_senders_message_count.labels(sender).set(int(cols[0].text.strip()))
+        # Parse Top 50 local senders by message count
+        local_senders_message_count_table = soup.find('a', {'name': 'Local sender count'}).find_next('table')
+        rows = local_senders_message_count_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                sender = cols[3].text.strip()
+                local_senders_message_count.labels(sender).set(int(cols[0].text.strip()))
 
-    # Parse Top 50 local senders by volume
-    local_senders_volume_table = soup.find('a', {'name': 'Local sender volume'}).find_next('table')
-    rows = local_senders_volume_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            sender = cols[3].text.strip()
-            local_senders_volume.labels(sender).set(convert_to_bytes(cols[1].text.strip()))
+        # Parse Top 50 local senders by volume
+        local_senders_volume_table = soup.find('a', {'name': 'Local sender volume'}).find_next('table')
+        rows = local_senders_volume_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                sender = cols[3].text.strip()
+                local_senders_volume.labels(sender).set(convert_to_bytes(cols[1].text.strip()))
 
-    # Parse Top 50 host destinations by message count
-    host_destinations_message_count_table = soup.find('a', {'name': 'Host destination count'}).find_next('table')
-    rows = host_destinations_message_count_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            host = cols[4].text.strip()
-            host_destinations_message_count.labels(host).set(int(cols[0].text.strip()))
+        # Parse Top 50 host destinations by message count
+        host_destinations_message_count_table = soup.find('a', {'name': 'Host destination count'}).find_next('table')
+        rows = host_destinations_message_count_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                host = cols[4].text.strip()
+                host_destinations_message_count.labels(host).set(int(cols[0].text.strip()))
 
-    # Parse Top 50 host destinations by volume
-    host_destinations_volume_table = soup.find('a', {'name': 'Host destination volume'}).find_next('table')
-    rows = host_destinations_volume_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            host = cols[4].text.strip()
-            host_destinations_volume.labels(host).set(convert_to_bytes(cols[2].text.strip()))
+        # Parse Top 50 host destinations by volume
+        host_destinations_volume_table = soup.find('a', {'name': 'Host destination volume'}).find_next('table')
+        rows = host_destinations_volume_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                host = cols[4].text.strip()
+                host_destinations_volume.labels(host).set(convert_to_bytes(cols[2].text.strip()))
 
-    # Parse Top 50 local destinations by message count
-    local_destinations_message_count_table = soup.find('a', {'name': 'Local destination count'}).find_next('table')
-    rows = local_destinations_message_count_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            destination = cols[4].text.strip()
-            local_destinations_message_count.labels(destination).set(int(cols[0].text.strip()))
+        # Parse Top 50 local destinations by message count
+        local_destinations_message_count_table = soup.find('a', {'name': 'Local destination count'}).find_next('table')
+        rows = local_destinations_message_count_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                destination = cols[4].text.strip()
+                local_destinations_message_count.labels(destination).set(int(cols[0].text.strip()))
 
-    # Parse Top 50 local destinations by volume
-    local_destinations_volume_table = soup.find('a', {'name': 'Local destination volume'}).find_next('table')
-    rows = local_destinations_volume_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            destination = cols[4].text.strip()
-            local_destinations_volume.labels(destination).set(convert_to_bytes(cols[2].text.strip()))
+        # Parse Top 50 local destinations by volume
+        local_destinations_volume_table = soup.find('a', {'name': 'Local destination volume'}).find_next('table')
+        rows = local_destinations_volume_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                destination = cols[4].text.strip()
+                local_destinations_volume.labels(destination).set(convert_to_bytes(cols[2].text.strip()))
 
-    # Parse Top 50 rejected ips by message count
-    rejected_ips_message_count_table = soup.find('a', {'name': 'Rejected ip count'}).find_next('table')
-    rows = rejected_ips_message_count_table.find_all('tr')
-    
-    for row in rows[1:]:  # Skip header row
-        cols = row.find_all('td')
-        if len(cols) > 0:
-            ip = cols[1].text.strip()
-            rejected_ips_message_count.labels(ip).inc(int(cols[0].text.strip()))
+        # Parse Top 50 rejected ips by message count
+        rejected_ips_message_count_table = soup.find('a', {'name': 'Rejected ip count'}).find_next('table')
+        rows = rejected_ips_message_count_table.find_all('tr')
+        
+        for row in rows[1:]:  # Skip header row
+            cols = row.find_all('td')
+            if len(cols) > 0:
+                ip = cols[1].text.strip()
+                rejected_ips_message_count.labels(ip).inc(int(cols[0].text.strip()))
+    except Exception as err:
+        pass
 
 
 def get_exim_stats():
