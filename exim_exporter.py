@@ -38,7 +38,7 @@ def convert_time_range_to_seconds(time_range):
 
 # Queue metrics
 exim_queue_count = Gauge('exim_queue_count', 'Total number of emails in the Exim queue')
-exim_email_count = Gauge('exim_email_count', 'Number of emails in the queue per sender', ['email', 'hostname'])
+exim_queue_email_count = Counter('exim_queue_email_count', 'Number of emails in the queue per sender', ['email', 'hostname'])
 
 # Grand total summary
 messages_received = Gauge('exim_messages_received', 'Total messages received')
@@ -64,7 +64,7 @@ queue_time_all = Gauge('exim_queue_time_all_messages', 'Time spent on the queue 
 queue_time_remote = Gauge('exim_queue_time_remote_messages', 'Time spent on the queue for messages with at least one remote delivery', ['time_range'])
 
 # Relayed messages
-relayed_messages = Gauge('exim_relayed_messages', 'Relayed messages', ['from_host', 'from_mail', 'to_host', 'to_mail'])
+relayed_messages = Counter('exim_relayed_messages', 'Relayed messages', ['from_host', 'from_mail', 'to_host', 'to_mail'])
 
 # Top 50 mail rejection reasons by message count
 rejection_reasons = Counter('exim_rejection_reasons', 'Mail rejection reasons by message count', ['reason'])
@@ -82,7 +82,7 @@ local_senders_message_count = Gauge('exim_local_senders_message_count', 'Local s
 local_senders_volume = Gauge('exim_local_senders_volume_bytes', 'Local senders by volume', ['sender'])
 
 # Top 50 host destinations by message count
-host_destinations_message_count = Gauge('exim_host_destinations_message_count', 'Host destinations by message count', ['host'])
+host_destinations_message_count = Counter('exim_host_destinations_message_count', 'Host destinations by message count', ['host'])
 
 # Top 50 host destinations by volume
 host_destinations_volume = Gauge('exim_host_destinations_volume_bytes', 'Host destinations by volume', ['host'])
@@ -115,7 +115,7 @@ def get_email_counts():
             parts = line.split()
             if len(parts) > 0 and '@' in parts[-1]:
                 email = parts[-1]
-                email.replace('<', '').replace('>', '')
+                email = email.replace('<', '').replace('>', '')
                 email_counts[email] = email_counts.get(email, 0) + 1
         return email_counts
     except Exception as e:
@@ -132,9 +132,10 @@ def update_queue_metrics():
     exim_queue_count.set(queue_count)
 
     # Update the exim_email_count metric
+    exim_queue_email_count.clear()
     email_counts = get_email_counts()
     for email, count in email_counts.items():
-        exim_email_count.labels(email=email, hostname=hostname).set(count)
+        exim_queue_email_count.labels(email=email, hostname=hostname).inc(count)
 
 
 
@@ -227,7 +228,7 @@ def parse_exim_stats(html_content):
                 to_host = _to.split(' ')[0]
                 from_email = _from.split(' ')[1]
                 to_email = _to.split(' ')[1]
-                relayed_messages.labels(from_host, from_email, to_host, to_email).set(int(cols[0].text.strip()))
+                relayed_messages.labels(from_host, from_email, to_host, to_email).inc(int(cols[0].text.strip()))
 
         # Parse Top 50 mail rejection reasons by message count
         rejection_reasons_table = soup.find('a', {'name': 'Mail rejection reason count'}).find_next('table')
@@ -280,6 +281,7 @@ def parse_exim_stats(html_content):
                 local_senders_volume.labels(sender).set(convert_to_bytes(cols[1].text.strip()))
 
         # Parse Top 50 host destinations by message count
+        host_destinations_message_count.clear()
         host_destinations_message_count_table = soup.find('a', {'name': 'Host destination count'}).find_next('table')
         rows = host_destinations_message_count_table.find_all('tr')
         
@@ -287,7 +289,7 @@ def parse_exim_stats(html_content):
             cols = row.find_all('td')
             if len(cols) > 0:
                 host = cols[4].text.strip()
-                host_destinations_message_count.labels(host).set(int(cols[0].text.strip()))
+                host_destinations_message_count.labels(host).inc(int(cols[0].text.strip()))
 
         # Parse Top 50 host destinations by volume
         host_destinations_volume_table = soup.find('a', {'name': 'Host destination volume'}).find_next('table')
@@ -320,6 +322,7 @@ def parse_exim_stats(html_content):
                 local_destinations_volume.labels(destination).set(convert_to_bytes(cols[2].text.strip()))
 
         # Parse Top 50 rejected ips by message count
+        rejected_ips_message_count.clear()
         rejected_ips_message_count_table = soup.find('a', {'name': 'Rejected ip count'}).find_next('table')
         rows = rejected_ips_message_count_table.find_all('tr')
         
@@ -328,6 +331,8 @@ def parse_exim_stats(html_content):
             if len(cols) > 0:
                 ip = cols[1].text.strip()
                 rejected_ips_message_count.labels(ip).inc(int(cols[0].text.strip()))
+
+
     except Exception as err:
         pass
 
