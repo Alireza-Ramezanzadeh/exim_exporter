@@ -344,7 +344,7 @@ def get_exim_stats():
 
 def main():
     # Start the Prometheus HTTP server
-    start_http_server(8000)
+    start_http_server(9103)
     
     while True:
         # Get the eximstats output
